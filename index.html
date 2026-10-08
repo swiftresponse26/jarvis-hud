@@ -867,7 +867,7 @@
         adminPanelMsg.textContent = '';
         loadUserList();
       }catch(e){
-        adminError.textContent = 'INCORRECT PASSWORD';
+        adminError.textContent = e.status === 401 ? 'INCORRECT PASSWORD' : ('ERROR: ' + e.message);
       }
     }
     document.getElementById('adminSubmit').addEventListener('click', tryAdminSubmit);
