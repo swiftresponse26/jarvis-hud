@@ -416,6 +416,26 @@
   .admin-label{ display:block; font-size:10px; letter-spacing:2px; color:var(--text-dim); margin:14px 0 8px; }
   .admin-divider{ height:1px; background:var(--line); margin:16px 0; }
   .admin-msg{ font-size:11px; color:var(--cyan); min-height:14px; margin-top:4px; text-align:center; }
+
+  /* ---- accounts (login/signup) ---- */
+  .lock-box input{
+    width:100%; box-sizing:border-box; background:rgba(2,8,16,0.8); border:1px solid var(--line); color:var(--text);
+    font-family:'Share Tech Mono', monospace; font-size:13px; padding:10px 12px; outline:none; border-radius:2px;
+    margin-bottom:10px;
+  }
+  .lock-box input:focus{ border-color:var(--cyan); }
+  .link-btn{
+    background:none; border:none; color:var(--cyan); font-family:'Share Tech Mono', monospace;
+    font-size:11px; letter-spacing:0.5px; cursor:pointer; text-decoration:underline; padding:0;
+  }
+  .link-btn:hover{ opacity:0.8; }
+  .admin-user-list{ max-height:160px; overflow-y:auto; margin-bottom:10px; }
+  .admin-user-row{
+    display:flex; justify-content:space-between; gap:10px; font-size:11px; font-family:'Share Tech Mono', monospace;
+    padding:7px 0; border-bottom:1px solid var(--line); color:var(--text);
+  }
+  .status-active{ color:#5fffa0; }
+  .status-inactive{ color:var(--text-dim); }
 </style>
 </head>
 <body>
@@ -423,8 +443,32 @@
     <div class="lock-box">
       <div class="lock-title">J.A.R.V.I.S.</div>
       <div class="lock-sub">ACCESS LOCKED</div>
-      <p class="lock-desc">Unlock full system access to continue.</p>
-      <a id="unlockBtn" class="lock-btn" href="https://buy.stripe.com/cNi5kD1fV8m2gm45qG57W06" target="_blank" rel="noopener">UNLOCK ACCESS</a>
+
+      <div id="authForms">
+        <div id="loginForm">
+          <input type="email" id="loginEmail" placeholder="Email" autocomplete="username">
+          <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+          <div id="loginError" class="admin-error"></div>
+          <button id="loginSubmit" class="lock-btn" type="button">LOG IN</button>
+          <p class="lock-desc">No account? <button id="showSignup" class="link-btn" type="button">Sign up</button></p>
+        </div>
+        <div id="signupForm" style="display:none;">
+          <input type="email" id="signupEmail" placeholder="Email" autocomplete="username">
+          <input type="password" id="signupPassword" placeholder="Password (min 8 characters)" autocomplete="new-password">
+          <div id="signupError" class="admin-error"></div>
+          <button id="signupSubmit" class="lock-btn" type="button">CREATE ACCOUNT</button>
+          <p class="lock-desc">Already have an account? <button id="showLogin" class="link-btn" type="button">Log in</button></p>
+        </div>
+      </div>
+
+      <div id="paywallState" style="display:none;">
+        <p class="lock-desc" id="paywallEmail"></p>
+        <p class="lock-desc">Unlock full system access to continue.</p>
+        <a id="unlockBtn" class="lock-btn" href="#" target="_blank" rel="noopener">UNLOCK ACCESS</a>
+        <p class="lock-desc"><button id="recheckBtn" class="link-btn" type="button">I already paid — check again</button></p>
+        <p class="lock-desc"><button id="logoutBtn" class="link-btn" type="button">Sign out</button></p>
+      </div>
+
       <div class="lock-footer">
         <button id="adminOpenBtn" class="admin-link">ADMIN</button>
       </div>
@@ -446,12 +490,17 @@
   <div id="adminPanel" class="admin-panel">
     <div class="admin-panel-box">
       <div class="admin-title">ADMIN PANEL</div>
-      <button id="grantAccessBtn" class="admin-action-btn">GRANT ACCESS (SKIP PAYMENT)</button>
-      <button id="revokeAccessBtn" class="admin-action-btn">LOCK / REVOKE ACCESS</button>
+      <label class="admin-label">GRANT / REVOKE BY EMAIL</label>
+      <input type="email" id="adminTargetEmail" placeholder="user@email.com" autocomplete="off">
+      <button id="grantAccessBtn" class="admin-action-btn">GRANT ACCESS</button>
+      <button id="revokeAccessBtn" class="admin-action-btn">REVOKE ACCESS</button>
       <div class="admin-divider"></div>
       <label class="admin-label">CHANGE ADMIN PASSWORD</label>
       <input type="password" id="newPassInput" placeholder="New password" autocomplete="off">
       <button id="savePassBtn" class="admin-action-btn">SAVE NEW PASSWORD</button>
+      <div class="admin-divider"></div>
+      <label class="admin-label">ACCOUNTS</label>
+      <div id="adminUserList" class="admin-user-list"></div>
       <div id="adminPanelMsg" class="admin-msg"></div>
       <button id="adminCloseBtn" class="admin-close">CLOSE</button>
     </div>
@@ -657,45 +706,135 @@
     });
   })();
 
-  // ---- pay / lock screen + admin panel ----
+  // ---- accounts + pay / lock screen + admin panel ----
   (function(){
+    const API_BASE = "https://jarvis-auth-api.onrender.com";
     const STRIPE_LINK = "https://buy.stripe.com/cNi5kD1fV8m2gm45qG57W06";
-    const DEFAULT_ADMIN_PASSWORD = "Soccer3900$";
 
     const lockScreen = document.getElementById('lockScreen');
+    const authForms = document.getElementById('authForms');
+    const loginForm = document.getElementById('loginForm');
+    const signupForm = document.getElementById('signupForm');
+    const paywallState = document.getElementById('paywallState');
+    const paywallEmail = document.getElementById('paywallEmail');
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPassword = document.getElementById('loginPassword');
+    const loginError = document.getElementById('loginError');
+    const signupEmail = document.getElementById('signupEmail');
+    const signupPassword = document.getElementById('signupPassword');
+    const signupError = document.getElementById('signupError');
+    const unlockBtn = document.getElementById('unlockBtn');
+
     const adminModal = document.getElementById('adminModal');
     const adminPanel = document.getElementById('adminPanel');
     const adminPassInput = document.getElementById('adminPassInput');
     const adminError = document.getElementById('adminError');
     const adminPanelMsg = document.getElementById('adminPanelMsg');
     const newPassInput = document.getElementById('newPassInput');
+    const adminTargetEmail = document.getElementById('adminTargetEmail');
+    const adminUserList = document.getElementById('adminUserList');
 
-    function getAdminPassword(){
-      return localStorage.getItem('jarvisAdminPassword') || DEFAULT_ADMIN_PASSWORD;
-    }
-    function isUnlocked(){
-      return localStorage.getItem('jarvisUnlocked') === 'true';
-    }
-    function setUnlocked(val){
-      if(val){ localStorage.setItem('jarvisUnlocked', 'true'); }
-      else{ localStorage.removeItem('jarvisUnlocked'); }
-    }
     function showLock(){ lockScreen.style.display = 'flex'; }
     function hideLock(){ lockScreen.style.display = 'none'; }
 
-    // Stripe redirects back here with ?unlocked=true (set that as the
-    // payment link's "after payment" redirect URL in the Stripe dashboard)
+    function getToken(){ return localStorage.getItem('jarvisToken'); }
+    function setToken(t){ if(t){ localStorage.setItem('jarvisToken', t); } else { localStorage.removeItem('jarvisToken'); } }
+    function getAdminToken(){ return sessionStorage.getItem('jarvisAdminToken'); }
+    function setAdminToken(t){ if(t){ sessionStorage.setItem('jarvisAdminToken', t); } else { sessionStorage.removeItem('jarvisAdminToken'); } }
+
+    async function api(path, opts){
+      opts = opts || {};
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+      const res = await fetch(API_BASE + path, Object.assign({}, opts, { headers }));
+      let data = null;
+      try{ data = await res.json(); }catch(e){}
+      if(!res.ok){
+        const err = new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function showAuthForms(){ authForms.style.display = 'block'; paywallState.style.display = 'none'; }
+    function showPaywall(email, userId){
+      authForms.style.display = 'none';
+      paywallState.style.display = 'block';
+      paywallEmail.textContent = 'Signed in as ' + email;
+      unlockBtn.href = STRIPE_LINK + '?client_reference_id=' + encodeURIComponent(userId);
+    }
+
+    async function refreshStatus(){
+      const token = getToken();
+      if(!token){ showLock(); showAuthForms(); return; }
+      try{
+        const data = await api('/api/me', { headers: { Authorization: 'Bearer ' + token } });
+        if(data.user.active){
+          hideLock();
+        } else {
+          showLock();
+          showPaywall(data.user.email, data.userId);
+        }
+      } catch(e){
+        setToken(null);
+        showLock();
+        showAuthForms();
+      }
+    }
+
+    // Stripe redirects back here after checkout. The webhook that actually
+    // marks the account active can land a few seconds after the redirect,
+    // so re-check status a few times instead of trusting the URL alone.
     const params = new URLSearchParams(window.location.search);
-    if(params.get('unlocked') === 'true'){
-      setUnlocked(true);
-      params.delete('unlocked');
+    const cameFromStripe = params.has('paid') || params.has('unlocked');
+    if(cameFromStripe){
+      params.delete('paid'); params.delete('unlocked');
       const q = params.toString();
       const newUrl = window.location.pathname + (q ? '?' + q : '') + window.location.hash;
       window.history.replaceState({}, '', newUrl);
     }
 
-    if(isUnlocked()){ hideLock(); } else { showLock(); }
+    refreshStatus().then(function(){
+      if(cameFromStripe){
+        let tries = 0;
+        const poll = setInterval(function(){
+          tries++;
+          refreshStatus();
+          if(tries >= 6) clearInterval(poll);
+        }, 3000);
+      }
+    });
 
+    document.getElementById('showSignup').addEventListener('click', function(){
+      loginForm.style.display = 'none'; signupForm.style.display = 'block';
+    });
+    document.getElementById('showLogin').addEventListener('click', function(){
+      signupForm.style.display = 'none'; loginForm.style.display = 'block';
+    });
+
+    document.getElementById('loginSubmit').addEventListener('click', async function(){
+      loginError.textContent = '';
+      try{
+        const data = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: loginEmail.value, password: loginPassword.value }) });
+        setToken(data.token);
+        await refreshStatus();
+      }catch(e){ loginError.textContent = e.message; }
+    });
+    document.getElementById('signupSubmit').addEventListener('click', async function(){
+      signupError.textContent = '';
+      try{
+        const data = await api('/api/signup', { method: 'POST', body: JSON.stringify({ email: signupEmail.value, password: signupPassword.value }) });
+        setToken(data.token);
+        await refreshStatus();
+      }catch(e){ signupError.textContent = e.message; }
+    });
+    document.getElementById('recheckBtn').addEventListener('click', refreshStatus);
+    document.getElementById('logoutBtn').addEventListener('click', function(){
+      setToken(null);
+      showLock(); showAuthForms();
+    });
+
+    // ---- admin ----
     document.getElementById('adminOpenBtn').addEventListener('click', function(){
       adminModal.style.display = 'flex';
       adminPassInput.value = '';
@@ -706,37 +845,58 @@
       adminModal.style.display = 'none';
     });
 
-    function tryAdminSubmit(){
-      if(adminPassInput.value === getAdminPassword()){
+    async function loadUserList(){
+      adminUserList.innerHTML = 'Loading…';
+      try{
+        const data = await api('/api/admin/users', { headers: { Authorization: 'Bearer ' + getAdminToken() } });
+        if(!data.users.length){ adminUserList.innerHTML = '<div class="admin-user-row">No accounts yet.</div>'; return; }
+        adminUserList.innerHTML = data.users.map(function(u){
+          return '<div class="admin-user-row"><span>' + u.email + '</span><span class="' + (u.active ? 'status-active' : 'status-inactive') + '">' + (u.active ? 'ACTIVE' : 'INACTIVE') + '</span></div>';
+        }).join('');
+      }catch(e){
+        adminUserList.innerHTML = 'Failed to load accounts.';
+      }
+    }
+
+    async function tryAdminSubmit(){
+      try{
+        const data = await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: adminPassInput.value }) });
+        setAdminToken(data.token);
         adminModal.style.display = 'none';
         adminPanel.style.display = 'flex';
         adminPanelMsg.textContent = '';
-      } else {
+        loadUserList();
+      }catch(e){
         adminError.textContent = 'INCORRECT PASSWORD';
       }
     }
     document.getElementById('adminSubmit').addEventListener('click', tryAdminSubmit);
     adminPassInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') tryAdminSubmit(); });
 
-    document.getElementById('grantAccessBtn').addEventListener('click', function(){
-      setUnlocked(true);
-      hideLock();
-      adminPanelMsg.textContent = 'ACCESS GRANTED.';
+    document.getElementById('grantAccessBtn').addEventListener('click', async function(){
+      try{
+        await api('/api/admin/grant', { method: 'POST', headers: { Authorization: 'Bearer ' + getAdminToken() }, body: JSON.stringify({ email: adminTargetEmail.value }) });
+        adminPanelMsg.textContent = 'ACCESS GRANTED FOR ' + adminTargetEmail.value;
+        loadUserList();
+        refreshStatus();
+      }catch(e){ adminPanelMsg.textContent = e.message; }
     });
-    document.getElementById('revokeAccessBtn').addEventListener('click', function(){
-      setUnlocked(false);
-      showLock();
-      adminPanelMsg.textContent = 'ACCESS REVOKED.';
+    document.getElementById('revokeAccessBtn').addEventListener('click', async function(){
+      try{
+        await api('/api/admin/revoke', { method: 'POST', headers: { Authorization: 'Bearer ' + getAdminToken() }, body: JSON.stringify({ email: adminTargetEmail.value }) });
+        adminPanelMsg.textContent = 'ACCESS REVOKED FOR ' + adminTargetEmail.value;
+        loadUserList();
+        refreshStatus();
+      }catch(e){ adminPanelMsg.textContent = e.message; }
     });
-    document.getElementById('savePassBtn').addEventListener('click', function(){
+    document.getElementById('savePassBtn').addEventListener('click', async function(){
       const v = newPassInput.value;
-      if(v && v.length >= 4){
-        localStorage.setItem('jarvisAdminPassword', v);
+      if(!v || v.length < 6){ adminPanelMsg.textContent = 'PASSWORD TOO SHORT (MIN 6 CHARS).'; return; }
+      try{
+        await api('/api/admin/change-password', { method: 'POST', headers: { Authorization: 'Bearer ' + getAdminToken() }, body: JSON.stringify({ newPassword: v }) });
         newPassInput.value = '';
         adminPanelMsg.textContent = 'PASSWORD UPDATED.';
-      } else {
-        adminPanelMsg.textContent = 'PASSWORD TOO SHORT (MIN 4 CHARS).';
-      }
+      }catch(e){ adminPanelMsg.textContent = e.message; }
     });
     document.getElementById('adminCloseBtn').addEventListener('click', function(){
       adminPanel.style.display = 'none';
