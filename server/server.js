@@ -23,6 +23,11 @@ const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const app = express();
 app.use(cors());
 
+// Some setup flows ping the webhook URL with a plain GET just to check it
+// resolves. Respond harmlessly instead of a 404 so that check never looks
+// like a failure.
+app.get('/api/stripe-webhook', (req, res) => res.status(200).send('ok - waiting for Stripe POST events'));
+
 // Stripe webhook needs the raw body for signature verification, so it's
 // registered BEFORE the json() body parser below.
 app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
