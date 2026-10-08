@@ -690,6 +690,22 @@
         <pre class="out" id="out" aria-live="polite">Standing by, Boss. Pick a quick action or tell me what to run.</pre>
       </div>
 
+      <div>
+        <div class="sec-title">IMAGE GENERATION</div>
+        <div class="ask" style="margin-bottom:8px;">
+          <input type="text" id="imgInput" placeholder="e.g. a sleek engraved steel business card, studio lighting" autocomplete="off">
+          <button class="btn go" id="imgGo">GENERATE</button>
+        </div>
+        <div id="imgStatus" class="empty" hidden></div>
+        <div id="imgResult" style="display:none; flex-direction:column; gap:8px;">
+          <img id="imgPreview" alt="Generated image" style="width:100%; border-radius:4px; border:1px solid var(--line);">
+          <div style="display:flex; gap:8px;">
+            <a id="imgDownload" class="btn" download="jarvis-image.png" style="text-decoration:none; text-align:center; flex:1;">DOWNLOAD</a>
+            <button class="btn" id="imgRegen" style="flex:1;">REGENERATE</button>
+          </div>
+        </div>
+      </div>
+
       <div id="pendWrap" hidden>
         <div class="sec-title">AWAITING YOUR APPROVAL</div>
         <div class="pend" id="pend"></div>
@@ -1295,8 +1311,7 @@
         else setChip($('chipShop'), 'ok', 'SHOPIFY: READY');
       }catch(e){ setChip($('chipShop'), 'warn', 'SHOPIFY: UNKNOWN'); }
     }
-    const sample = await getCap('sample');
-    setChip($('chipAI'), sample ? 'ok' : 'warn', sample ? 'REASONING: READY' : 'REASONING: UNAVAILABLE');
+    setChip($('chipAI'), 'ok', 'REASONING: READY');
   })();
 
   // ---- tools Claude may call ----
@@ -1361,52 +1376,52 @@
   }
   askStop.addEventListener('click', () => { if(ctl) ctl.abort(); });
 
-  const SAMPLE_ERR = {
-    not_granted: 'Access to Claude was not allowed for this page, so I cannot reason about that here.',
-    sampling_disabled: 'Claude is not available for this account.',
-    rate_limited: 'Usage limit reached. Give it a few minutes, Boss.',
-    session_expired: 'Your session expired. Reload the page and sign in again.',
-    upstream_error: 'The connection dropped mid-thought. Try again.',
-    prompt_too_large: 'That request got too big. Ask for less at once.',
-    refused: 'I could not help with that one as asked.'
-  };
+  const JARVIS_API_BASE = "https://jarvis-auth-api.onrender.com";
+  let askHistory = [];
 
   async function runAgent(request, opts){
     const doSpeak = !!(opts && opts.speak) || $('speakToggle').checked;
     if(running){ setOut('Still working on the last request. Press STOP to cancel it first.'); return; }
-    const sample = await getCap('sample');
-    if(!sample){
-      const m = 'I cannot reach my reasoning core from this view, Boss.';
+
+    const token = localStorage.getItem('jarvisToken');
+    if(!token){
+      const m = 'Boss, you need to sign in before I can answer that.';
       setOut(m); if(doSpeak) speak(m); return;
     }
+
     setRunning(true);
     ctl = new AbortController();
     setOut('Thinking…', true);
     flashLog('> WORKING ON IT...');
     statusText.textContent = 'PROCESSING';
 
-    const callOpts = { signal: ctl.signal, modelTier: 'default', onText: ({ text }) => setOut(text, true) };
     try{
-      const lim = await sample.limits();
-      if(lim && lim.tools){
-        let tools = buildTools();
-        if(lim.tools.maxCount) tools = tools.slice(0, lim.tools.maxCount);
-        callOpts.tools = tools;
+      const res = await fetch(JARVIS_API_BASE + '/api/ask', {
+        method: 'POST',
+        signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ message: request, history: askHistory })
+      });
+      const data = await res.json().catch(() => ({}));
+      if(!res.ok){
+        let m;
+        if(res.status === 403) m = 'Boss, your account is not active — unlock access first.';
+        else if(res.status === 401) m = 'Your session expired. Sign in again, Boss.';
+        else if(res.status === 429) m = data.error || 'Slow down a bit, Boss — too many requests.';
+        else m = data.error || 'Something went wrong reaching my reasoning core.';
+        setOut(m); if(doSpeak) speak(m);
+        return;
       }
-    }catch(e){}
-
-    const prompt = PERSONA + '\n\nNow: ' + new Date().toString() + '.\n\nBoss says: ' + request;
-    try{
-      const res = await sample(prompt, callOpts);
-      const txt = (res.text || '').trim();
-      setOut(txt + (res.truncated ? '\n\n[cut short: ask for less at a time]' : ''));
+      const txt = (data.text || '').trim();
+      setOut(txt);
       if(doSpeak && txt) speak(txt);
+      askHistory.push({ role: 'user', content: request }, { role: 'assistant', content: txt });
+      if(askHistory.length > 20) askHistory = askHistory.slice(-20);
     }catch(e){
-      if(e && e.code === 'cancelled'){ setOut((e.text ? e.text + '\n\n' : '') + '[stopped]'); }
+      if(e && e.name === 'AbortError'){ setOut('[stopped]'); }
       else{
-        const m = SAMPLE_ERR[e && e.code] || 'Something went wrong on my end, Boss.';
-        setOut((e && e.text ? e.text + '\n\n' : '') + m);
-        if(doSpeak) speak(m);
+        const m = 'Could not reach my reasoning core, Boss. Check the connection.';
+        setOut(m); if(doSpeak) speak(m);
       }
     }finally{
       setRunning(false); ctl = null;
@@ -1415,13 +1430,13 @@
   }
 
   const QUICK = [
-    ['STORE STATUS',  'Give me a quick status of my Shopify store: plan, how many products, and anything that needs my attention.'],
-    ['ORDERS',        'Show me my most recent orders and flag anything unpaid or unfulfilled.'],
-    ['SALES 30D',     'Pull my sales for the last 30 days: total sales, order count, and average order value. Compare to the previous period if there is data.'],
-    ['TOP PRODUCTS',  'Which products sold best in the last 30 days?'],
-    ['CUSTOMERS',     'Give me a snapshot of my customers: how many, repeat buyers, and biggest spenders.'],
-    ['LOW STOCK',     'Check my products for anything low or out of stock and tell me what to reorder.'],
-    ['BRIEFING',      'Give me my business briefing: store status, orders and sales this past week, low stock, and my open tasks. End with the top three things I should do today.']
+    ['DAILY PRIORITIES', 'Help me think through my top priorities for today across Pulse Precision and CharterFlow.'],
+    ['DRAFT CUSTOMER REPLY', 'Help me draft a reply to a customer. I will give you the situation.'],
+    ['MARKETING IDEAS', 'Give me a few fresh marketing ideas for Pulse Precision (laser engraving) or CharterFlow (charter boat booking).'],
+    ['PRICING SANITY CHECK', 'Help me sanity-check pricing for a product or charter — walk me through the numbers.'],
+    ['WRITE A LISTING', 'Help me write a compelling product listing or charter trip description.'],
+    ['BRAINSTORM', 'Let us brainstorm — I will tell you what I am working through.'],
+    ['BRIEFING', 'Give me a quick pep-talk style briefing and the top three things worth focusing on today.']
   ];
   QUICK.forEach(([label, prompt]) => {
     const b = document.createElement('button'); b.className = 'btn'; b.textContent = label;
@@ -1430,6 +1445,45 @@
   });
   askGo.addEventListener('click', () => { const v = askInput.value.trim(); if(!v) return; askInput.value = ''; runAgent(v); });
   askInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') askGo.click(); });
+
+  // =====================================================================
+  //  IMAGE GENERATION (Pollinations — keyless, works standalone)
+  // =====================================================================
+  (function(){
+    const imgInput = $('imgInput'), imgGo = $('imgGo'), imgStatus = $('imgStatus');
+    const imgResult = $('imgResult'), imgPreview = $('imgPreview'), imgDownload = $('imgDownload'), imgRegen = $('imgRegen');
+    let lastPrompt = '';
+
+    function generate(promptText){
+      const p = String(promptText || '').trim();
+      if(!p) return;
+      lastPrompt = p;
+      imgGo.disabled = true; imgRegen.disabled = true;
+      imgStatus.hidden = false; imgStatus.textContent = 'Generating image…';
+      imgResult.style.display = 'none';
+      const seed = Math.floor(Math.random() * 1e9);
+      const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(p) +
+        '?width=1024&height=1024&nologo=true&seed=' + seed;
+      const probe = new Image();
+      probe.onload = () => {
+        imgPreview.src = url;
+        imgDownload.href = url;
+        imgStatus.hidden = true;
+        imgResult.style.display = 'flex';
+        imgGo.disabled = false; imgRegen.disabled = false;
+        flashLog('> IMAGE READY');
+      };
+      probe.onerror = () => {
+        imgStatus.textContent = 'Image generation failed. Try a different prompt, Boss.';
+        imgGo.disabled = false; imgRegen.disabled = false;
+      };
+      probe.src = url;
+    }
+
+    imgGo.addEventListener('click', () => generate(imgInput.value));
+    imgInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') generate(imgInput.value); });
+    imgRegen.addEventListener('click', () => generate(lastPrompt));
+  })();
 
   // =====================================================================
   //  COMMAND ROUTING
@@ -1443,7 +1497,6 @@
     if(!c){ speak(greetings[Math.floor(Math.random()*greetings.length)]); return; }
 
     if(BUSINESS_RE.test(c) && !c.includes('joke')){
-      openOps();
       runAgent(command, { speak: true });
       return;
     }

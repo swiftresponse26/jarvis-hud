@@ -11,6 +11,7 @@ const {
   ADMIN_INIT_PASSWORD,
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
+  OPENAI_API_KEY,
   PORT
 } = process.env;
 
@@ -180,6 +181,79 @@ app.get('/api/me', authUser, async (req, res) => {
   const result = await pool.query('SELECT email, active FROM users WHERE id = $1', [req.userId]);
   if (result.rowCount === 0) return res.status(404).json({ error: 'not found' });
   res.json({ user: result.rows[0], userId: req.userId });
+});
+
+// ---- Jarvis's real AI brain ----
+const JARVIS_SYSTEM_PROMPT = [
+  'You are JARVIS, a sharp, warm, dry-witted personal AI assistant speaking to "Boss".',
+  'You run inside a futuristic HUD interface, so keep replies tight and conversational — this is read aloud by text-to-speech, so never use markdown, asterisks, bullet points, or headers.',
+  'Keep most answers under about 120 words unless Boss clearly wants more detail.',
+  'You do NOT have live access to any of Boss\'s real business data (no live Shopify numbers, no real orders, no real inventory) from this chat. If asked for live figures, say plainly that you are not connected to that data source right now rather than inventing numbers.',
+  'You can discuss strategy, draft messages, brainstorm, explain things, do math, and have a normal conversation on any topic.'
+].join(' ');
+
+// simple in-memory per-user rate limit: 30 requests per 10 minutes
+const askRateLimit = new Map();
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  const max = 30;
+  const entry = askRateLimit.get(userId) || { count: 0, resetAt: now + windowMs };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + windowMs; }
+  entry.count += 1;
+  askRateLimit.set(userId, entry);
+  return entry.count <= max;
+}
+
+async function requireActiveUser(req, res, next) {
+  const result = await pool.query('SELECT active FROM users WHERE id = $1', [req.userId]);
+  if (result.rowCount === 0 || !result.rows[0].active) {
+    return res.status(403).json({ error: 'account is not active' });
+  }
+  next();
+}
+
+app.post('/api/ask', authUser, requireActiveUser, async (req, res) => {
+  if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI brain is not configured yet' });
+  if (!checkRateLimit(req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
+
+  const message = String(req.body.message || '').trim().slice(0, 4000);
+  if (!message) return res.status(400).json({ error: 'message is required' });
+  const history = Array.isArray(req.body.history) ? req.body.history.slice(-10) : [];
+
+  const messages = [{ role: 'system', content: JARVIS_SYSTEM_PROMPT }];
+  for (const turn of history) {
+    if (turn && (turn.role === 'user' || turn.role === 'assistant') && typeof turn.content === 'string') {
+      messages.push({ role: turn.role, content: turn.content.slice(0, 2000) });
+    }
+  }
+  messages.push({ role: 'user', content: message });
+
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + OPENAI_API_KEY
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages,
+        temperature: 0.7,
+        max_tokens: 500
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      console.error('OpenAI error:', data);
+      return res.status(502).json({ error: (data.error && data.error.message) || 'AI request failed' });
+    }
+    const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    res.json({ text: text.trim() });
+  } catch (err) {
+    console.error('Error calling OpenAI:', err);
+    res.status(502).json({ error: 'Could not reach the AI service' });
+  }
 });
 
 app.post('/api/admin/login', async (req, res) => {
