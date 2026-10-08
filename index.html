@@ -86,6 +86,17 @@
   }
   .topbar .clock{color:var(--cyan-glow); text-shadow:0 0 8px rgba(159,244,255,0.5);}
 
+  .hud-admin-tab{
+    position:fixed; top:14px; right:14px; z-index:50;
+    font-family:'Orbitron', sans-serif; font-size:9px; letter-spacing:2px;
+    color:var(--text-dim); background:rgba(6,26,38,0.6); border:1px solid var(--line);
+    padding:6px 12px; border-radius:2px; cursor:pointer; opacity:0.7;
+  }
+  .hud-admin-tab:hover{ opacity:1; border-color:var(--cyan); color:var(--cyan); }
+  @media (max-width: 720px){
+    .hud-admin-tab{ top:auto; bottom:14px; right:14px; font-size:8px; padding:5px 9px; }
+  }
+
   .voice-btn{
     position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:7;
     font-family:'Orbitron', sans-serif; font-size:10px; letter-spacing:2px;
@@ -517,6 +528,8 @@
     <div class="clock" id="clock">00:00:00</div>
   </div>
 
+  <button id="hudAdminTab" class="hud-admin-tab">ADMIN</button>
+
   <button class="voice-btn" id="voiceBtn"><span class="mic-dot"></span><span id="voiceBtnLabel">ACTIVATE VOICE</span></button>
   <button class="stop-talk-btn" id="stopTalkBtn">■ STOP TALKING</button>
   <select class="voice-select" id="voiceSelect" aria-label="Voice"><option>Loading voices…</option></select>
@@ -835,12 +848,14 @@
     });
 
     // ---- admin ----
-    document.getElementById('adminOpenBtn').addEventListener('click', function(){
+    function openAdminLogin(){
       adminModal.style.display = 'flex';
       adminPassInput.value = '';
       adminError.textContent = '';
       adminPassInput.focus();
-    });
+    }
+    document.getElementById('adminOpenBtn').addEventListener('click', openAdminLogin);
+    document.getElementById('hudAdminTab').addEventListener('click', openAdminLogin);
     document.getElementById('adminCancel').addEventListener('click', function(){
       adminModal.style.display = 'none';
     });
@@ -865,6 +880,7 @@
         adminModal.style.display = 'none';
         adminPanel.style.display = 'flex';
         adminPanelMsg.textContent = '';
+        hideLock(); // admins get straight into Jarvis, no payment/account needed
         loadUserList();
       }catch(e){
         adminError.textContent = e.status === 401 ? 'INCORRECT PASSWORD' : ('ERROR: ' + e.message);
