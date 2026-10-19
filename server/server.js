@@ -94,7 +94,7 @@ async function initDb() {
       value TEXT NOT NULL
     );
   `);
-  // Paid-user chat quota: 50 chats per rolling 2-day window.
+  // Paid-user chat quota: 45 chats per rolling 5-hour window (matches Claude Pro's pace).
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ask_count INTEGER NOT NULL DEFAULT 0;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ask_window_start TIMESTAMPTZ NOT NULL DEFAULT now();`);
   const existing = await pool.query("SELECT 1 FROM settings WHERE key = 'admin_password_hash'");
@@ -241,11 +241,12 @@ async function requireActiveUser(req, res, next) {
   next();
 }
 
-// Paid-user product quota: 50 chats per rolling 2-day window, persisted in
-// Postgres so it survives restarts/cold starts (unlike the in-memory burst
-// limiter above). Admin is exempt entirely.
-const ASK_QUOTA_LIMIT = 50;
-const ASK_QUOTA_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+// Paid-user product quota: 45 chats per rolling 5-hour window (matches the
+// pace of Claude Pro's own "at least 45 messages every 5 hours" limit),
+// persisted in Postgres so it survives restarts/cold starts (unlike the
+// in-memory burst limiter above). Admin is exempt entirely.
+const ASK_QUOTA_LIMIT = 45;
+const ASK_QUOTA_WINDOW_MS = 5 * 60 * 60 * 1000;
 async function checkAskQuota(userId) {
   const result = await pool.query('SELECT ask_count, ask_window_start FROM users WHERE id = $1', [userId]);
   if (result.rowCount === 0) return { allowed: false };
@@ -274,7 +275,7 @@ app.post('/api/ask', authUserOrAdmin, requireActiveUser, async (req, res) => {
       const resetMsg = quota.resetAt
         ? ' More chats unlock ' + quota.resetAt.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) + '.'
         : '';
-      return res.status(429).json({ error: 'You have used all 50 chats for this 2-day period.' + resetMsg });
+      return res.status(429).json({ error: 'You have used all 45 chats for this 5-hour period.' + resetMsg });
     }
   }
 
