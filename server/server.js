@@ -240,7 +240,7 @@ async function requireActiveUser(req, res, next) {
 
 app.post('/api/ask', authUserOrAdmin, requireActiveUser, async (req, res) => {
   if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI brain is not configured yet' });
-  if (!checkRateLimit(req.isAdmin ? 'admin' : req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
+  if (!req.isAdmin && !checkRateLimit(req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
 
   const message = String(req.body.message || '').trim().slice(0, 4000);
   if (!message) return res.status(400).json({ error: 'message is required' });
