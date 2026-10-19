@@ -1431,7 +1431,9 @@
     const doSpeak = !!(opts && opts.speak) || $('speakToggle').checked;
     if(running){ setOut('Still working on the last request. Press STOP to cancel it first.'); return; }
 
-    const token = localStorage.getItem('jarvisToken');
+    // Admin (Boss) session doesn't need a paid user account -- prefer the
+    // admin token when logged in that way, fall back to a normal user token.
+    const token = sessionStorage.getItem('jarvisAdminToken') || localStorage.getItem('jarvisToken');
     if(!token){
       const m = 'Boss, you need to sign in before I can answer that.';
       setOut(m); if(doSpeak) speak(m); return;

@@ -136,6 +136,30 @@ function authAdmin(req, res, next) {
   }
 }
 
+// For routes the admin (Boss) should be able to use directly, without a
+// paid user account -- accepts either a normal user token or the admin token.
+function authUserOrAdmin(req, res, next) {
+  const hdr = req.headers.authorization || '';
+  const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'missing token' });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.role === 'admin') {
+      req.isAdmin = true;
+      req.userId = null;
+      return next();
+    }
+    if (payload.role === 'user') {
+      req.isAdmin = false;
+      req.userId = payload.sub;
+      return next();
+    }
+    return res.status(401).json({ error: 'invalid token' });
+  } catch (e) {
+    return res.status(401).json({ error: 'invalid or expired token' });
+  }
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 app.post('/api/signup', async (req, res) => {
@@ -206,6 +230,7 @@ function checkRateLimit(userId) {
 }
 
 async function requireActiveUser(req, res, next) {
+  if (req.isAdmin) return next(); // Boss doesn't need a paid account
   const result = await pool.query('SELECT active FROM users WHERE id = $1', [req.userId]);
   if (result.rowCount === 0 || !result.rows[0].active) {
     return res.status(403).json({ error: 'account is not active' });
@@ -213,9 +238,9 @@ async function requireActiveUser(req, res, next) {
   next();
 }
 
-app.post('/api/ask', authUser, requireActiveUser, async (req, res) => {
+app.post('/api/ask', authUserOrAdmin, requireActiveUser, async (req, res) => {
   if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI brain is not configured yet' });
-  if (!checkRateLimit(req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
+  if (!checkRateLimit(req.isAdmin ? 'admin' : req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
 
   const message = String(req.body.message || '').trim().slice(0, 4000);
   if (!message) return res.status(400).json({ error: 'message is required' });
