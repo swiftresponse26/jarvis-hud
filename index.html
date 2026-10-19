@@ -546,7 +546,7 @@
 
   <div class="type-row">
     <button id="opsBtn" aria-expanded="false" aria-controls="ops">OPS</button>
-    <input type="text" id="typeInput" placeholder="Type a command, e.g. hey jarvis how are my orders" autocomplete="off">
+    <input type="text" id="typeInput" placeholder="Type a message to Jarvis…" autocomplete="off">
     <button id="typeSend">SEND</button>
   </div>
 
@@ -1569,7 +1569,7 @@
     } else if(c.includes('your name')){
       speak("Jarvis, Boss. Pleasure's mine.");
     } else if(c.includes('what can you do') || c.includes('help me') || c.includes('what do you do')){
-      speak("I can pull live numbers from your Shopify store, brief you on the business, keep your task list, and queue store changes for your approval. Anything that changes the store waits for your say-so, Boss. I can also answer just about anything else.");
+      speak("I can help you think through Pulse Precision and CharterFlow, draft messages, brainstorm, generate images, and just about anything else you'd ask a sharp assistant, Boss.");
     } else if(c.includes('joke')){
       const jokes = [
         "Why don't scientists trust atoms? Because they make up everything, Boss.",
@@ -1590,27 +1590,9 @@
     } else if(c.includes('sing')){
       speak("I'll spare you my singing voice, Boss. It's not one of my better features.");
     } else {
-      flashLog('> THINKING...');
-      const sample = await getCap('sample');
-      if(sample){
-        try{
-          const res = await sample(
-            `You are JARVIS, an AI assistant with a warm, dry-witted, formal-but-friendly personality ` +
-            `(think Iron Man's JARVIS crossed with Claude). The user goes by "Boss". ` +
-            `They just said: "${command}". ` +
-            `Actually answer or help with what they said, the way a genuinely helpful, knowledgeable assistant would, ` +
-            `with real substance, not a filler acknowledgment. Keep it conversational since it will be read aloud: ` +
-            `a few natural sentences, no markdown, no lists, no asterisks, no headers. ` +
-            `You can address them as "Boss" occasionally but don't force it into every sentence.`,
-            { modelTier: "default" }
-          );
-          speak((res && res.text ? res.text : "").trim() || "I didn't quite catch that, Boss. Try again?");
-        }catch(err){
-          speak("I couldn't reach the network for that one, Boss.");
-        }
-      } else {
-        speak("I didn't have a scripted answer for that one, and I can't reach my full thinking capability from here right now, Boss.");
-      }
+      // Anything that isn't a quick scripted line goes to the real AI brain,
+      // same as the business questions above.
+      runAgent(command, { speak: true });
     }
   }
 
@@ -1701,14 +1683,14 @@
   const typeInput = $('typeInput');
   const typeSend = $('typeSend');
 
+  // Typed input is a plain chat box, like ChatGPT — no wake word needed.
+  // The "hey jarvis" wake word only applies to voice (handled in
+  // recognition.onresult above); whatever is typed here is sent as-is.
   function submitTyped(){
     const raw = typeInput.value.trim();
     if(!raw) return;
     beep(880, 0.12);
-    const lower = raw.toLowerCase();
-    const idx = lower.indexOf('jarvis');
-    const command = idx !== -1 ? raw.slice(idx + 'jarvis'.length).replace(/^[,.\s]+/, '') : raw;
-    handleCommand(command);
+    handleCommand(raw);
     typeInput.value = '';
     typeInput.blur();
   }
