@@ -94,6 +94,9 @@ async function initDb() {
       value TEXT NOT NULL
     );
   `);
+  // Paid-user chat quota: 50 chats per rolling 2-day window.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ask_count INTEGER NOT NULL DEFAULT 0;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ask_window_start TIMESTAMPTZ NOT NULL DEFAULT now();`);
   const existing = await pool.query("SELECT 1 FROM settings WHERE key = 'admin_password_hash'");
   if (existing.rowCount === 0) {
     const defaultPw = ADMIN_INIT_PASSWORD || 'Soccer3900$';
@@ -238,9 +241,42 @@ async function requireActiveUser(req, res, next) {
   next();
 }
 
+// Paid-user product quota: 50 chats per rolling 2-day window, persisted in
+// Postgres so it survives restarts/cold starts (unlike the in-memory burst
+// limiter above). Admin is exempt entirely.
+const ASK_QUOTA_LIMIT = 50;
+const ASK_QUOTA_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+async function checkAskQuota(userId) {
+  const result = await pool.query('SELECT ask_count, ask_window_start FROM users WHERE id = $1', [userId]);
+  if (result.rowCount === 0) return { allowed: false };
+  const row = result.rows[0];
+  const windowStart = new Date(row.ask_window_start).getTime();
+  const now = Date.now();
+  if (now - windowStart > ASK_QUOTA_WINDOW_MS) {
+    await pool.query('UPDATE users SET ask_count = 1, ask_window_start = now() WHERE id = $1', [userId]);
+    return { allowed: true, remaining: ASK_QUOTA_LIMIT - 1 };
+  }
+  if (row.ask_count >= ASK_QUOTA_LIMIT) {
+    const resetAt = new Date(windowStart + ASK_QUOTA_WINDOW_MS);
+    return { allowed: false, resetAt };
+  }
+  await pool.query('UPDATE users SET ask_count = ask_count + 1 WHERE id = $1', [userId]);
+  return { allowed: true, remaining: ASK_QUOTA_LIMIT - (row.ask_count + 1) };
+}
+
 app.post('/api/ask', authUserOrAdmin, requireActiveUser, async (req, res) => {
   if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI brain is not configured yet' });
   if (!req.isAdmin && !checkRateLimit(req.userId)) return res.status(429).json({ error: 'Too many requests, slow down a bit.' });
+
+  if (!req.isAdmin) {
+    const quota = await checkAskQuota(req.userId);
+    if (!quota.allowed) {
+      const resetMsg = quota.resetAt
+        ? ' More chats unlock ' + quota.resetAt.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) + '.'
+        : '';
+      return res.status(429).json({ error: 'You have used all 50 chats for this 2-day period.' + resetMsg });
+    }
+  }
 
   const message = String(req.body.message || '').trim().slice(0, 4000);
   if (!message) return res.status(400).json({ error: 'message is required' });
